@@ -1,84 +1,52 @@
-# Weby Backend
+# Weby Frontend (Flutter)
 
-Node.js / TypeScript / Express / Prisma / PostgreSQL API powering the Weby voice assistant.
+This is the Weby Flutter application: authentication, settings/management
+screens, and the animated Weby assistant orb + floating overlay.
 
-## Stack
+## Merging into your existing Android Studio project
 
-- **Runtime:** Node.js 20+, TypeScript (strict mode)
-- **Framework:** Express 4
-- **ORM:** Prisma + PostgreSQL
-- **Auth:** Argon2id password hashing, JWT access + refresh tokens (rotated), Google Sign-In (server-verified)
-- **Validation:** Zod on every external input
-- **Security:** Helmet, CORS allowlist, rate limiting, structured logging with secret redaction
-- **AI:** Provider abstraction (Gemini, Hugging Face) behind a fallback-aware router
+You uploaded an existing Flutter project scaffold (`my_chat_app`) that
+already has working `android/` and `ios/` folders. Rather than
+regenerating those (which would just reproduce Android Studio's own
+defaults), drop these files into that project:
 
-## Getting started (local development)
+1. Copy `lib/` from this zip over your project's `lib/` folder (replacing the counter-app boilerplate).
+2. Replace your `pubspec.yaml` with the one in this zip, then run `flutter pub get`.
+3. Keep your existing `android/`, `ios/`, `test/` folders as-is - native Android work (overlay, foreground service, contacts, telephony, MethodChannel) lands in the next build stage and will edit `android/app/src/main/kotlin/...` directly.
 
-```bash
-cp .env.example .env        # fill in DATABASE_URL, JWT secrets, etc.
-npm install
-docker compose up -d postgres   # or point DATABASE_URL at your own Postgres
-npx prisma migrate dev --name init
-npm run dev                 # http://localhost:3000
-```
+## Configuration
 
-Generate strong JWT secrets:
+Point the app at your deployed (or local) backend at build/run time:
 
 ```bash
-openssl rand -hex 64
+flutter run --dart-define=API_BASE_URL=https://your-backend.example.com/api/v1
 ```
 
-## Getting started (Docker, full stack)
+Defaults to `http://10.0.2.2:3000/api/v1`, which is how the Android
+emulator reaches `localhost:3000` on your dev machine - convenient for
+testing against the backend from stage 1 with no config needed.
 
-```bash
-cp .env.example .env
-docker compose up --build
-```
+## What's implemented in this stage
 
-This builds the backend image and starts Postgres + the API together. On container start, `prisma migrate deploy` runs automatically before the server boots.
+- **Auth:** Splash (session bootstrap) → Login / Register → Home. Google Sign-In UI is wired up but needs `google_sign_in` configured with your `GOOGLE_CLIENT_ID` to actually obtain a real ID token (currently shows a placeholder message).
+- **Token handling:** access + refresh tokens in `flutter_secure_storage`; a Dio interceptor auto-refreshes on 401, queues concurrent requests during a refresh, and force-signs-out on an unrecoverable refresh failure.
+- **The Weby orb** (`lib/features/assistant/presentation/assistant_circle.dart`): a from-scratch `CustomPainter` animation - breathing ripple rings, a rotating gradient "thinking" ring, a glassy gradient core, and a live equalizer-style waveform - driven purely by `AnimationController`s, no image assets. Six states: idle, listening, processing, speaking, executing, error.
+- **Floating overlay** (`assistant_overlay.dart`): bottom-anchored, non-blocking, shows the orb + live transcript + AI response, in-app today, and it's the exact widget the native stage will render inside Android's overlay window.
+- **Settings hub:** Account, Assistant (name/wake word/voice verification/AI provider), Privacy (plain-language explanations, not just toggles), History (list + delete).
+- **AI round-trip works today:** since there's no real STT wired in yet, the listening sheet has a text field standing in for the live transcript - type a question and it hits your real `/ai/chat` backend end-to-end. This is the exact seam the Kotlin `SpeechRecognizer` stream will plug into next.
 
-## Scripts
+## Not yet implemented (next stage: Android/Kotlin native)
 
-| Command | Description |
-|---|---|
-| `npm run dev` | Start with hot reload (tsx) |
-| `npm run build` | Compile TypeScript to `dist/` |
-| `npm start` | Run the compiled build |
-| `npm test` | Run Jest test suite |
-| `npm run prisma:migrate` | Create/apply a dev migration |
-| `npm run prisma:deploy` | Apply migrations in production |
-| `npm run prisma:studio` | Open Prisma Studio DB browser |
+- Real wake-word detection & speech-to-text (currently a text-input stand-in)
+- The true system-level floating overlay (`TYPE_APPLICATION_OVERLAY`)
+- Foreground service for background listening
+- Contacts + relationship mapping ("call my bro")
+- App-launching via Android Intents
+- Text-to-speech playback of responses
+- The Flutter↔Kotlin MethodChannel itself
 
-## Testing
-
-`tests/health.test.ts` runs with no external dependencies.
-
-`tests/auth.test.ts` and `tests/conversations.test.ts` need a real Postgres database (they exercise real registration, login, token rotation, and cross-user access-control behavior — not mocks). Point `DATABASE_URL` at a disposable test database before running:
-
-```bash
-DATABASE_URL="postgresql://weby:weby@localhost:5432/weby_test?schema=public" npx prisma migrate deploy
-npm test
-```
-
-## Deployment
-
-The backend is a standard containerized Node service — deployable to **Railway, Fly.io, a VPS, or any Docker-friendly host**.
-
-**Why not Vercel:** Vercel's serverless functions are stateless and short-lived, which fits poorly with this API's persistent Postgres connections, session/refresh-token model, and (future) WebSocket usage. It *can* be adapted to Vercel's serverless runtime, but that requires connection pooling (e.g. Prisma Accelerate/PgBouncer) and reworking a few things. Railway or Fly.io run the Dockerfile as-is with a normal long-lived process, are the simplest path to "just works," and (per your note about inactivity) don't spin down on idle the way some free tiers do.
-
-Steps for Railway/Fly.io:
-1. Provision a PostgreSQL instance (both platforms offer one).
-2. Set all variables from `.env.example` in the platform's environment settings.
-3. Deploy the `backend/` directory — the included `Dockerfile` handles build, migration, and startup.
-4. Point your Flutter app's API base URL at the deployed service.
-
-## API Documentation
-
-See [`API.md`](./API.md) for the full endpoint reference.
-
-## Security notes
-
-- Passwords: Argon2id, never logged, never returned.
-- Refresh tokens: only a SHA-256 hash is stored; tokens rotate on every refresh.
-- AI provider API keys live only in this backend's environment — they are never sent to or accepted from the Flutter client.
-- Every conversation/message/preference query is scoped to `req.userId`, sourced only from a verified access token, never from client-supplied IDs.
+These all have clean seams already: `AssistantController` in
+`lib/features/assistant/state/assistant_controller.dart` is where
+`updateTranscript()` will be fed from a native EventChannel stream, and
+`_localCommandPrefixes` is where the open/call intent detection will
+hand off to the platform channel instead of showing a placeholder message.
