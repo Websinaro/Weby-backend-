@@ -23,7 +23,7 @@ Authenticated routes require `Authorization: Bearer <accessToken>`.
 |---|---|---|---|
 | POST | `/auth/register` | – | `{ name, email, password }` → creates user, returns tokens |
 | POST | `/auth/login` | – | `{ email, password }` → returns tokens |
-| POST | `/auth/google` | – | `{ idToken }` (verified server-side against Google) → returns tokens |
+| POST | `/auth/google` | – | `{ idToken }` (Firebase ID token, verified server-side via firebase-admin) → returns tokens |
 | POST | `/auth/refresh` | – | `{ refreshToken }` → rotates and returns new tokens |
 | POST | `/auth/logout` | – | `{ refreshToken }` → revokes that session |
 | POST | `/auth/logout-all` | ✅ | Revokes every session for the current user |

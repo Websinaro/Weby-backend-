@@ -16,7 +16,9 @@ export const loginSchema = z.object({
 });
 
 export const googleAuthSchema = z.object({
-  idToken: z.string().min(1, "Google idToken is required"),
+  // A Firebase ID token (obtained on-device after signing in with Google
+  // through firebase_auth), NOT a raw Google OAuth idToken.
+  idToken: z.string().min(1, "Firebase idToken is required"),
 });
 
 export const refreshSchema = z.object({

@@ -1,8 +1,5 @@
-import { OAuth2Client } from "google-auth-library";
-import { env } from "../../config/env";
+import { getFirebaseApp } from "../../config/firebase";
 import { ApiError } from "../../utils/ApiError";
-
-const client = env.GOOGLE_CLIENT_ID ? new OAuth2Client(env.GOOGLE_CLIENT_ID) : null;
 
 export interface VerifiedGoogleIdentity {
   googleId: string;
@@ -12,38 +9,45 @@ export interface VerifiedGoogleIdentity {
   avatarUrl?: string;
 }
 
-// Verifies a Google ID token SERVER-SIDE using Google's public keys.
-// This is the only source of truth for "who is this Google user" -
-// we deliberately ignore any email/name the client might also send
-// alongside the token (spec: never trust a frontend-supplied email).
+// Verifies a Firebase ID token SERVER-SIDE using Firebase's public keys.
+// The client obtains this token by signing in with Google through
+// firebase_auth on-device, then calling user.getIdToken(). This is the
+// only source of truth for "who is this Google user" - we deliberately
+// ignore any email/name the client might also send alongside the token
+// (spec: never trust a frontend-supplied identity).
 export async function verifyGoogleIdToken(idToken: string): Promise<VerifiedGoogleIdentity> {
-  if (!client) {
+  const app = getFirebaseApp();
+  if (!app) {
     throw ApiError.internal(
       "Google sign-in is not configured on this server",
       "GOOGLE_NOT_CONFIGURED"
     );
   }
 
-  let ticket;
+  let decoded;
   try {
-    ticket = await client.verifyIdToken({
-      idToken,
-      audience: env.GOOGLE_CLIENT_ID,
-    });
+    decoded = await app.auth().verifyIdToken(idToken);
   } catch {
     throw ApiError.unauthorized("Invalid Google credential", "INVALID_GOOGLE_TOKEN");
   }
 
-  const payload = ticket.getPayload();
-  if (!payload || !payload.sub || !payload.email) {
+  // Confirm the token was actually minted via the Google sign-in provider,
+  // not some other Firebase-supported provider (email link, phone, etc.) -
+  // this endpoint is Google-sign-in-only.
+  const signInProvider = decoded.firebase?.sign_in_provider;
+  if (signInProvider !== "google.com") {
+    throw ApiError.unauthorized("Invalid Google credential", "INVALID_GOOGLE_TOKEN");
+  }
+
+  if (!decoded.sub || !decoded.email) {
     throw ApiError.unauthorized("Invalid Google credential", "INVALID_GOOGLE_TOKEN");
   }
 
   return {
-    googleId: payload.sub,
-    email: payload.email.toLowerCase(),
-    emailVerified: Boolean(payload.email_verified),
-    name: payload.name ?? payload.email.split("@")[0],
-    avatarUrl: payload.picture,
+    googleId: decoded.sub,
+    email: decoded.email.toLowerCase(),
+    emailVerified: Boolean(decoded.email_verified),
+    name: (decoded.name as string | undefined) ?? decoded.email.split("@")[0],
+    avatarUrl: decoded.picture as string | undefined,
   };
 }
